@@ -119,6 +119,6 @@ def stream_brochure(company_name, url):
     
     for chunk in stream:
         response += chunk.choices[0].delta.content or ''
-    print(response, end='', flush=True)
+        print(response, end='', flush=True)
 
 stream_brochure("w3schools", "https://www.w3schools.com/")
