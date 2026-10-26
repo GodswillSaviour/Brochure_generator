@@ -2,3 +2,6 @@
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+day1.ipynb
+day2.ipynb
+day3.ipynb

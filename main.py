@@ -1,35 +1,124 @@
 import os
-from openai import OpenAI
-from scraper import fetch_website_contents
+import json
 from dotenv import load_dotenv
+from scraper import fetch_website_contents,fetch_website_links
+from openai import OpenAI
 
 load_dotenv(override=True)
 api_key = os.getenv('OPENAI_API_KEY')
 
-if not api_key:
-    print("api key not found")
-elif not api_key.startswith("sk-proj"):
-    print("api key doesnt start with sk-proj")
-elif api_key.strip() != api_key:
-    print("invalid api key")
+if api_key and api_key.startswith('sk-proj-') and len(api_key)>10:
+    print("API key looks good so far")
 else:
-    print("Api key found")
-
+    print("There might be a problem with your API key? Please visit the troubleshooting notebook!")
+    
+MODEL = 'gpt-5-nano'
 openai = OpenAI()
-system_prompt ="""you are an AI assistant that helps summarize the contents of a website in a user friendly explanation"""
-user_prompt = """help me summarize the contents of the website"""
-
-
-def message_for(website):
-    return [{"role":"system", "content":system_prompt}, 
-            {"role":"user","content":user_prompt + website }]
-
-
-def summarize(url):
-    website = fetch_website_contents(url)
-    response = openai.chat.completions.create(model="gpt-4.1-nano", messages=message_for(website))
-    return response.choices[0].message.content
 
 
 
-print(summarize("https://edwarddonner.com"))
+
+
+link_system_prompt = """
+You are provided with a list of links found on a webpage.
+You are able to decide which of the links would be most relevant to include in a brochure about the company,
+such as links to an About page, or a Company page, or Careers/Jobs pages.
+You should respond in JSON as in this example:
+
+{
+    "links": [
+        {"type": "about page", "url": "https://full.url/goes/here/about"},
+        {"type": "careers page", "url": "https://another.full.url/careers"}
+    ]
+}
+"""
+
+
+def get_links_user_prompt(url):
+    user_prompt = f"""
+Here is the list of links on the website {url} -
+Please decide which of these are relevant web links for a brochure about the company, 
+respond with the full https URL in JSON format.
+Do not include Terms of Service, Privacy, email links.
+
+Links (some might be relative links):
+
+"""
+    links = fetch_website_links(url)
+    user_prompt += "\n".join(
+        f"{link['type']}: {link['url']}"
+        for link in links["links"]
+    )
+    return user_prompt
+    
+def select_relevant_links(url):
+    print(f"selecting relevant links for {url} by calling {MODEL}")
+    response = openai.chat.completions.create(model=MODEL, messages=[{"role":"system","content": link_system_prompt}, {"role": "user", "content": get_links_user_prompt(url)}], response_format = {"type":"json_object"})
+    result = response.choices[0].message.content
+    links = json.loads(result)
+    print(f"found {len(links['links'])} relevant link")
+    return links
+
+
+def fetch_page_and_all_relevant_links(url):
+    contents = fetch_website_contents(url)
+    relevant_links = select_relevant_links(url)
+    result = f"## Landing Page:\n\n{contents}\n## Relevant Links:\n"
+    for link in relevant_links['links']:
+        result += f"\n\n### Link: {link['type']}\n"
+        result += fetch_website_contents(link["url"])
+    return result
+
+
+
+brochure_system_prompt = """
+You are an assistant that analyzes the contents of several relevant pages from a company website
+and creates a short brochure about the company for prospective customers, investors and recruits.
+Respond in markdown without code blocks.
+Include details of company culture, customers and careers/jobs if you have the information.
+"""
+
+# Or uncomment the lines below for a more humorous brochure - this demonstrates how easy it is to incorporate 'tone':
+
+# brochure_system_prompt = """
+# You are an assistant that analyzes the contents of several relevant pages from a company website
+# and creates a short, humorous, entertaining, witty brochure about the company for prospective customers, investors and recruits.
+# Respond in markdown without code blocks.
+# Include details of company culture, customers and careers/jobs if you have the information.
+# """
+
+def get_brochure_user_prompt(company_name, url):
+    user_prompt = f"""
+You are looking at a company called: {company_name}
+Here are the contents of its landing page and other relevant pages;
+use this information to build a short brochure of the company in markdown without code blocks.\n\n
+"""
+    user_prompt += fetch_page_and_all_relevant_links(url)
+    user_prompt = user_prompt[:5_000] # Truncate if more than 5,000 characters
+    return user_prompt
+
+
+
+def create_brochure(company_name, url):
+    response = openai.chat.completions.create(model="gpt-5-nano", messages = [{"role": "system", "content":brochure_system_prompt}, {"role":"user", "content": get_brochure_user_prompt(company_name, url)}])
+    result = response.choices[0].message.content
+    return result
+
+
+
+def stream_brochure(company_name, url):
+    stream = openai.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": brochure_system_prompt},
+            {"role": "user", "content": get_brochure_user_prompt(company_name, url)}
+          ],
+        stream=True
+    )    
+    response = ""
+    
+    for chunk in stream:
+        response += chunk.choices[0].delta.content or ''
+    print(response, end='', flush=True)
+
+stream_brochure("w3schools", "https://www.w3schools.com/")
